@@ -1,0 +1,1135 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#0e0e0c" />
+<title>Caja de Voz — Control de Transacciones</title>
+
+<!-- PWA manifest (inline as data URI so the single file is installable) -->
+<link rel="manifest" href='data:application/manifest+json;charset=utf-8,{"name":"Caja de Voz","short_name":"Caja","start_url":".","display":"standalone","background_color":"%230e0e0c","theme_color":"%230e0e0c","icons":[{"src":"data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 192 192%22><rect width=%22192%22 height=%22192%22 rx=%2240%22 fill=%22%230e0e0c%22/><circle cx=%2296%22 cy=%2288%22 r=%2224%22 fill=%22none%22 stroke=%22%23e7e5dd%22 stroke-width=%228%22/><path d=%22M60 124c10 16 62 16 72 0%22 fill=%22none%22 stroke=%22%23e7e5dd%22 stroke-width=%228%22 stroke-linecap=%22round%22/></svg>","sizes":"192x192","type":"image/svg+xml"}]}' />
+
+<script src="https://cdn.tailwindcss.com?plugins=typography"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<style>
+  :root{
+    --bg: oklch(0.18 0.005 80);
+    --bg-2: oklch(0.22 0.006 80);
+    --surface: oklch(0.25 0.007 80);
+    --border: oklch(0.33 0.008 80);
+    --ink: oklch(0.96 0.008 90);
+    --ink-dim: oklch(0.72 0.01 90);
+    --ink-faint: oklch(0.50 0.01 90);
+    --accent: oklch(0.78 0.14 140);     /* green — positive */
+    --danger: oklch(0.70 0.14 28);      /* warm red — negative */
+    --warn:   oklch(0.82 0.13 82);      /* amber — commission */
+  }
+  html,body{background:var(--bg);color:var(--ink);font-family:'Geist',ui-sans-serif,system-ui,sans-serif;font-feature-settings:"ss01","cv11";-webkit-font-smoothing:antialiased}
+  .mono{font-family:'Geist Mono',ui-monospace,monospace;font-variant-numeric:tabular-nums}
+  .pos{color:var(--accent)}
+  .neg{color:var(--danger)}
+  .warn{color:var(--warn)}
+  .dim{color:var(--ink-dim)}
+  .faint{color:var(--ink-faint)}
+  .surface{background:var(--bg-2);border:1px solid var(--border)}
+  .chip{background:var(--surface);border:1px solid var(--border)}
+  .btn{border:1px solid var(--border);background:var(--bg-2);transition:all .15s ease;user-select:none}
+  .btn:hover:not(:disabled){background:var(--surface);border-color:var(--ink-faint)}
+  .btn:active:not(:disabled){transform:translateY(1px)}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+  .btn-primary{background:var(--accent);color:oklch(0.18 0.03 140);border-color:transparent;font-weight:600}
+  .btn-primary:hover:not(:disabled){background:oklch(0.84 0.14 140);border-color:transparent}
+  .btn-danger{border-color:color-mix(in oklch, var(--danger) 40%, transparent);color:var(--danger)}
+  .btn-danger:hover:not(:disabled){background:color-mix(in oklch, var(--danger) 15%, var(--bg-2))}
+  .kbd{font-family:'Geist Mono',monospace;font-size:10px;padding:2px 6px;border:1px solid var(--border);border-bottom-width:2px;border-radius:4px;color:var(--ink-dim);background:var(--bg)}
+
+  /* Mic button */
+  .mic{position:relative}
+  .mic-ring{position:absolute;inset:-8px;border-radius:9999px;border:2px solid var(--accent);opacity:0;pointer-events:none}
+  .mic.listening .mic-ring{animation:pulse 1.4s ease-out infinite}
+  .mic.listening{background:var(--accent);color:oklch(0.18 0.03 140)}
+  @keyframes pulse{0%{opacity:.7;transform:scale(1)}100%{opacity:0;transform:scale(1.35)}}
+
+  /* Balance number */
+  .balance{font-family:'Geist Mono',monospace;font-weight:500;font-variant-numeric:tabular-nums;letter-spacing:-0.04em;line-height:.95;display:flex;align-items:baseline;flex-wrap:nowrap;gap:.05em}
+  .balance .int{font-size:1em}
+  .balance .cents{font-size:.38em;letter-spacing:-0.02em;opacity:.7;align-self:flex-start;margin-top:.15em}
+  .balance .currency{font-size:.22em;font-weight:500;color:var(--ink-faint);text-transform:uppercase;letter-spacing:.2em;align-self:flex-start;margin-top:.3em;margin-left:.3em}
+
+  /* History row hover */
+  .row{border-bottom:1px solid var(--border)}
+  .row:last-child{border-bottom:none}
+  .row-undo{animation:undoFlash .8s ease-out}
+  @keyframes undoFlash{0%{background:color-mix(in oklch, var(--danger) 20%, transparent)}100%{background:transparent}}
+  .row-new{animation:newFlash 1.2s ease-out}
+  @keyframes newFlash{0%{background:color-mix(in oklch, var(--accent) 18%, transparent)}100%{background:transparent}}
+
+  /* Live transcript pill */
+  .transcript{min-height:2.5rem;background:var(--bg-2);border:1px dashed var(--border);transition:border-color .2s}
+  .transcript.active{border-color:var(--accent);border-style:solid}
+  .transcript.error{border-color:var(--danger);border-style:solid}
+
+  /* Toast */
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);opacity:0;transition:all .25s ease;pointer-events:none;z-index:50}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+  /* Modal */
+  .modal-backdrop{background:color-mix(in oklch, var(--bg) 80%, transparent);backdrop-filter:blur(6px)}
+
+  /* Subtle grain */
+  body::before{content:"";position:fixed;inset:0;pointer-events:none;opacity:.025;mix-blend-mode:overlay;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>")}
+
+  input.bare{background:transparent;border:none;outline:none;color:var(--ink)}
+  input.bare::placeholder{color:var(--ink-faint)}
+
+  .scroll-thin::-webkit-scrollbar{width:6px}
+  .scroll-thin::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+
+  /* Status dot */
+  .dot{width:8px;height:8px;border-radius:9999px;background:var(--ink-faint);display:inline-block}
+  .dot.live{background:var(--accent);box-shadow:0 0 0 3px color-mix(in oklch, var(--accent) 25%, transparent)}
+  .dot.err{background:var(--danger)}
+
+  /* Mobile bottom bar */
+  .mobile-voicebar{display:none}
+  .desktop-voicebar{display:block}
+
+  @media (max-width: 768px){
+    .balance{font-size:clamp(56px, 15vw, 110px) !important}
+    .desktop-voicebar{display:none}
+    .mobile-voicebar{display:block}
+    body{padding-bottom:160px}
+    .toast{bottom:calc(180px + env(safe-area-inset-bottom, 0px))}
+  }
+  @media (max-width: 380px){
+    .balance{font-size:64px !important}
+  }
+
+  /* Floating bottom voice bar for mobile */
+  .voicebar-wrap{
+    position:fixed;left:0;right:0;bottom:0;z-index:30;
+    padding:12px 16px calc(16px + env(safe-area-inset-bottom, 0px));
+    background:linear-gradient(to top, var(--bg) 60%, color-mix(in oklch, var(--bg) 0%, transparent));
+    pointer-events:none;
+  }
+  .voicebar{pointer-events:auto;background:var(--bg-2);border:1px solid var(--border);border-radius:20px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;box-shadow:0 -4px 24px rgba(0,0,0,.35)}
+  .voicebar .transcript{min-height:auto;padding:8px 12px;font-size:13px}
+  .voicebar-row{display:flex;align-items:center;gap:10px}
+  .mic-big{width:64px;height:64px;margin:0 auto}
+</style>
+</head>
+<body class="min-h-screen">
+
+<div class="max-w-6xl mx-auto px-5 md:px-8 py-6 md:py-10">
+
+  <!-- Header -->
+  <header class="flex items-center justify-between mb-8 md:mb-12">
+    <div class="flex items-center gap-3">
+      <div class="w-9 h-9 rounded-lg surface flex items-center justify-center">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="dim">
+          <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+          <path d="M12 19v3"/>
+        </svg>
+      </div>
+      <div>
+        <div class="text-[15px] font-semibold leading-tight">Caja de Voz</div>
+        <div class="text-[11px] faint mono uppercase tracking-wider">Control de transacciones</div>
+      </div>
+    </div>
+
+    <div class="flex items-center gap-2">
+      <div id="micStatus" class="hidden md:flex items-center gap-2 text-xs dim mr-2">
+        <span class="dot" id="statusDot"></span>
+        <span id="statusText" class="mono uppercase tracking-wider">Inactivo</span>
+      </div>
+      <button id="archiveBtn" class="btn rounded-lg px-3 py-1.5 text-xs dim flex items-center gap-1.5" title="Historial de días">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+        <span class="hidden md:inline">Historial</span>
+      </button>
+      <button id="closeDayBtn" class="btn btn-primary rounded-lg px-3 py-1.5 text-xs flex items-center gap-1.5" title="Cerrar día y archivar">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12l5 5L20 7"/></svg>
+        Cerrar día
+      </button>
+      <button id="resetBtn" class="btn rounded-lg px-2.5 py-1.5 text-xs dim" title="Reiniciar sesión">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- Main grid -->
+  <div class="grid grid-cols-1 lg:grid-cols-5 gap-6 md:gap-8">
+
+    <!-- LEFT: balance + voice -->
+    <div class="lg:col-span-3 space-y-6">
+
+      <!-- Balance -->
+      <section class="surface rounded-2xl p-6 md:p-8">
+        <div class="flex items-start justify-between mb-3">
+          <div class="text-[11px] faint mono uppercase tracking-[0.18em]" id="currentDate">—</div>
+          <div class="text-[11px] faint mono" id="txCount">0 transacciones</div>
+        </div>
+        <div class="text-[11px] faint mono uppercase tracking-[0.18em] mb-2">Saldo actual</div>
+        <div class="balance text-[96px] md:text-[128px]" id="balance"></div>
+        <div class="flex flex-wrap gap-x-6 gap-y-1 mt-4 text-[13px]">
+          <div class="flex items-center gap-2">
+            <span class="faint mono uppercase text-[10px] tracking-wider">Inicial</span>
+            <span class="mono dim" id="initialBalance">0.00</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="faint mono uppercase text-[10px] tracking-wider">Comisiones</span>
+            <span class="mono warn" id="totalCommissions">0.00</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="faint mono uppercase text-[10px] tracking-wider">Entradas</span>
+            <span class="mono pos" id="totalIn">+0.00</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="faint mono uppercase text-[10px] tracking-wider">Salidas</span>
+            <span class="mono neg" id="totalOut">-0.00</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Voice input (desktop/tablet inline) -->
+      <section class="desktop-voicebar surface rounded-2xl p-5 md:p-6">
+        <div class="flex items-center justify-between mb-4">
+          <div class="text-[11px] faint mono uppercase tracking-[0.18em]">Dictado</div>
+          <div class="text-[11px] faint mono">ES · Honduras</div>
+        </div>
+
+        <div class="flex items-center gap-4 md:gap-5">
+          <!-- Mic -->
+          <button id="micBtn" class="mic btn rounded-full w-16 h-16 md:w-20 md:h-20 flex items-center justify-center shrink-0" aria-label="Activar micrófono">
+            <span class="mic-ring"></span>
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+              <path d="M12 19v3"/>
+            </svg>
+          </button>
+
+          <div class="flex-1 min-w-0">
+            <div id="transcript" class="transcript rounded-lg px-4 py-3 mono text-sm md:text-base">
+              <span class="faint">Presiona el micrófono y dicta: <span class="dim">"depósito dos mil"</span></span>
+            </div>
+            <div class="flex items-center justify-between mt-3 gap-3">
+              <button id="manualBtn" class="text-[11px] faint hover:text-[color:var(--ink-dim)] underline underline-offset-2 mono uppercase tracking-wider">Ingresar manualmente</button>
+              <div class="text-[11px] faint mono hidden md:block"><span class="kbd">Espacio</span> para hablar</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Manual entry (hidden by default) -->
+        <div id="manualPanel" class="hidden mt-4 pt-4 border-t border-[color:var(--border)]">
+          <form id="manualForm" class="grid grid-cols-[1fr_140px_auto] gap-2">
+            <select id="manualType" class="bare chip rounded-lg px-3 py-2.5 text-sm">
+              <option value="Deposito_propio">Depósito propio (sin comisión)</option>
+              <option value="Deposito">Depósito</option>
+              <option value="retiro">Retiro</option>
+              <option value="Pago_servicios">Pago de servicios</option>
+              <option value="Pago">Pago</option>
+              <option value="Remesa">Remesa</option>
+              <option value="Recarga">Recarga</option>
+              <option value="Gasto">Gasto</option>
+            </select>
+            <input id="manualAmount" class="bare chip rounded-lg px-3 py-2.5 text-sm mono" type="number" step="0.01" min="0" placeholder="Monto" />
+            <button type="submit" class="btn btn-primary rounded-lg px-4 py-2.5 text-sm">Registrar</button>
+          </form>
+        </div>
+      </section>
+
+      <!-- Quick reference -->
+      <section class="surface rounded-2xl p-5 md:p-6">
+        <div class="flex items-center justify-between mb-3">
+          <div class="text-[11px] faint mono uppercase tracking-[0.18em]">Cómo dictar</div>
+          <button id="toggleRules" class="text-[11px] faint hover:text-[color:var(--ink-dim)] mono uppercase tracking-wider">Ver reglas →</button>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-2 text-[13px]">
+          <div class="chip rounded-lg px-3 py-2 mono flex items-center gap-2"><span class="faint">›</span><span>"depósito propio quinientos"</span></div>
+          <div class="chip rounded-lg px-3 py-2 mono flex items-center gap-2"><span class="faint">›</span><span>"depósito dos mil"</span></div>
+          <div class="chip rounded-lg px-3 py-2 mono flex items-center gap-2"><span class="faint">›</span><span>"retiro 1500"</span></div>
+          <div class="chip rounded-lg px-3 py-2 mono flex items-center gap-2"><span class="faint">›</span><span>"remesa cinco mil"</span></div>
+          <div class="chip rounded-lg px-3 py-2 mono flex items-center gap-2"><span class="faint">›</span><span>"recarga cien"</span></div>
+          <div class="chip rounded-lg px-3 py-2 mono flex items-center gap-2"><span class="faint">›</span><span>"gasto cincuenta"</span></div>
+        </div>
+      </section>
+    </div>
+
+    <!-- RIGHT: history -->
+    <aside class="lg:col-span-2">
+      <div class="surface rounded-2xl overflow-hidden flex flex-col" style="max-height: 780px">
+        <div class="flex items-center justify-between px-5 py-4 border-b border-[color:var(--border)]">
+          <div>
+            <div class="text-[11px] faint mono uppercase tracking-[0.18em]">Historial</div>
+            <div class="text-xs dim mt-0.5">Últimas 10 transacciones</div>
+          </div>
+          <button id="undoBtn" class="btn btn-danger rounded-lg px-3 py-1.5 text-xs flex items-center gap-1.5" disabled>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-15-6.7L3 13"/></svg>
+            Deshacer
+          </button>
+        </div>
+        <div id="history" class="flex-1 overflow-y-auto scroll-thin">
+          <div class="px-5 py-12 text-center">
+            <div class="mx-auto w-10 h-10 rounded-full chip flex items-center justify-center mb-3">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="faint"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+            </div>
+            <div class="text-sm dim">Sin transacciones aún</div>
+            <div class="text-xs faint mt-1">Dicta tu primera operación</div>
+          </div>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- Mobile floating voice bar -->
+  <div class="mobile-voicebar voicebar-wrap">
+    <div class="voicebar">
+      <div id="transcriptMobile" class="transcript rounded-lg mono">
+        <span class="faint">Presiona el micrófono y dicta: <span class="dim">"depósito dos mil"</span></span>
+      </div>
+      <div class="voicebar-row">
+        <button id="manualBtnMobile" class="btn rounded-lg px-3 py-2 text-[11px] mono uppercase tracking-wider faint shrink-0">Manual</button>
+        <button id="micBtnMobile" class="mic btn btn-primary rounded-full mic-big flex items-center justify-center shrink-0" aria-label="Activar micrófono">
+          <span class="mic-ring"></span>
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+            <path d="M12 19v3"/>
+          </svg>
+        </button>
+        <button id="undoBtnMobile" class="btn btn-danger rounded-lg px-3 py-2 text-[11px] mono uppercase tracking-wider shrink-0" disabled>Deshacer</button>
+      </div>
+    </div>
+  </div>
+
+  <footer class="mt-10 pt-6 border-t border-[color:var(--border)] flex flex-wrap items-center justify-between gap-3 text-[11px] faint mono">
+    <div>Datos guardados en este dispositivo · Sin servidor</div>
+    <div class="flex items-center gap-4">
+      <span>Moneda: <span class="dim">LPS</span></span>
+      <span id="sessionInfo">Sesión iniciada —</span>
+    </div>
+  </footer>
+</div>
+
+<!-- Initial balance modal -->
+<div id="initModal" class="fixed inset-0 modal-backdrop hidden items-center justify-center z-40 px-5">
+  <div class="surface rounded-2xl max-w-md w-full p-7">
+    <div class="text-[11px] faint mono uppercase tracking-[0.18em] mb-2">Nueva sesión</div>
+    <h2 class="text-2xl font-semibold mb-2">Saldo inicial</h2>
+    <p class="text-sm dim mb-5">Ingresa el efectivo con el que comienzas la jornada. Este monto será la base para calcular tu saldo actual.</p>
+
+    <div id="lastCloseSuggestion" class="hidden chip rounded-xl p-3 mb-3 flex items-center gap-3">
+      <div class="w-8 h-8 rounded-lg flex items-center justify-center pos shrink-0" style="background:color-mix(in oklch, var(--accent) 15%, transparent)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12l5 5L20 7"/></svg>
+      </div>
+      <div class="flex-1 min-w-0">
+        <div class="text-[11px] faint mono uppercase tracking-wider">Último cierre</div>
+        <div class="text-sm"><span id="lastCloseDate" class="dim"></span> · <span id="lastCloseAmt" class="mono"></span></div>
+      </div>
+      <button type="button" id="useLastClose" class="btn rounded-lg px-3 py-1.5 text-xs shrink-0">Usar</button>
+    </div>
+
+    <form id="initForm">
+      <div class="chip rounded-xl p-4 mb-4 flex items-baseline gap-2">
+        <span class="faint mono text-sm">LPS</span>
+        <input id="initAmount" type="number" inputmode="decimal" step="0.01" min="0" required autofocus
+          class="bare mono text-3xl font-medium flex-1 w-full" placeholder="0.00" />
+      </div>
+      <div class="flex gap-2">
+        <button type="submit" class="btn btn-primary rounded-lg px-4 py-3 text-sm flex-1">Iniciar sesión</button>
+      </div>
+      <div class="text-[11px] faint mt-3 mono">Presiona Enter para confirmar</div>
+    </form>
+  </div>
+</div>
+
+<!-- Close day modal -->
+<div id="closeDayModal" class="fixed inset-0 modal-backdrop hidden items-center justify-center z-40 px-5">
+  <div class="surface rounded-2xl max-w-md w-full p-7">
+    <div class="text-[11px] faint mono uppercase tracking-[0.18em] mb-2">Cierre de día</div>
+    <h2 class="text-2xl font-semibold mb-2">Archivar jornada</h2>
+    <p class="text-sm dim mb-5">Se guardará un registro con todas las transacciones del día. El saldo final será el inicial de mañana.</p>
+
+    <div class="chip rounded-xl p-4 mb-3">
+      <div class="grid grid-cols-2 gap-3 text-sm">
+        <div><div class="text-[10px] faint mono uppercase tracking-wider">Inicial</div><div class="mono" id="cdInitial">—</div></div>
+        <div><div class="text-[10px] faint mono uppercase tracking-wider">Final</div><div class="mono pos" id="cdFinal">—</div></div>
+        <div><div class="text-[10px] faint mono uppercase tracking-wider">Transacciones</div><div class="mono" id="cdCount">—</div></div>
+        <div><div class="text-[10px] faint mono uppercase tracking-wider">Comisiones</div><div class="mono warn" id="cdComm">—</div></div>
+      </div>
+    </div>
+
+    <label class="text-[11px] faint mono uppercase tracking-wider block mb-1">Fecha del cierre</label>
+    <input id="cdDate" type="date" class="bare chip rounded-lg px-3 py-2.5 text-sm mono w-full mb-4" />
+
+    <div class="flex gap-2">
+      <button type="button" id="cdCancel" class="btn rounded-lg px-4 py-3 text-sm flex-1">Cancelar</button>
+      <button type="button" id="cdConfirm" class="btn btn-primary rounded-lg px-4 py-3 text-sm flex-1">Cerrar día</button>
+    </div>
+  </div>
+</div>
+
+<!-- Archive (historical days) modal -->
+<div id="archiveModal" class="fixed inset-0 modal-backdrop hidden items-center justify-center z-40 px-5">
+  <div class="surface rounded-2xl max-w-3xl w-full max-h-[90vh] flex flex-col overflow-hidden">
+    <div class="flex items-center justify-between px-6 py-4 border-b border-[color:var(--border)]" style="background:var(--bg-2)">
+      <div>
+        <div class="text-[11px] faint mono uppercase tracking-[0.18em]">Archivo</div>
+        <h3 class="text-lg font-semibold">Historial de días</h3>
+      </div>
+      <button id="closeArchive" class="btn rounded-lg px-3 py-1.5 text-xs">Cerrar</button>
+    </div>
+    <div class="flex-1 overflow-hidden grid grid-cols-1 md:grid-cols-[240px_1fr]">
+      <div id="archiveList" class="border-r border-[color:var(--border)] overflow-y-auto scroll-thin" style="max-height:70vh"></div>
+      <div id="archiveDetail" class="overflow-y-auto scroll-thin p-5" style="max-height:70vh"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Rules modal -->
+<div id="rulesModal" class="fixed inset-0 modal-backdrop hidden items-center justify-center z-40 px-5">
+  <div class="surface rounded-2xl max-w-2xl w-full max-h-[85vh] overflow-y-auto scroll-thin">
+    <div class="flex items-center justify-between px-6 py-4 border-b border-[color:var(--border)] sticky top-0" style="background:var(--bg-2)">
+      <div>
+        <div class="text-[11px] faint mono uppercase tracking-[0.18em]">Referencia</div>
+        <h3 class="text-lg font-semibold">Reglas de negocio</h3>
+      </div>
+      <button id="closeRules" class="btn rounded-lg px-3 py-1.5 text-xs">Cerrar</button>
+    </div>
+    <div class="p-6 space-y-3 text-sm" id="rulesContent"></div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast" class="toast surface rounded-xl px-4 py-3 text-sm flex items-center gap-2 shadow-xl"></div>
+
+<script>
+/* =========================================================================
+   CAJA DE VOZ — voice-first financial transaction control
+   Single-file PWA. Data persists in localStorage.
+   NOTE: This is a client-only build. To add a Python/Flask + SQLite backend
+   later, replace the `store` module with fetch() calls — the shape of
+   transactions + session is already server-ready (JSON with id/ts fields).
+   ========================================================================= */
+
+// ---------- Business rules (from reglas_negocio.txt) ----------
+// Each rule returns { delta, commission } given an amount.
+// delta is the signed change to the CASH on hand (before commission).
+// commission is always SUBTRACTED from the balance (cost to operator).
+const RULES = {
+  Deposito_propio: {
+    label: "Depósito propio",
+    sign: +1,
+    compute: (a) => ({ delta: +a, commission: 0 }),
+    note: "Sumar monto, sin comisión",
+  },
+  Deposito: {
+    label: "Depósito",
+    sign: +1,
+    compute: (a) => ({
+      delta: +a,
+      commission: a < 10000 ? a * 0.010 : a * 0.005, // 10 por mil / 5 por mil
+    }),
+    note: "< 10,000 → 10 por mil · ≥ 10,000 → 5 por mil",
+  },
+  retiro: {
+    label: "Retiro",
+    sign: -1,
+    compute: (a) => ({ delta: -a, commission: 0 }),
+    note: "Restar monto, sin comisión",
+  },
+  Pago_servicios: {
+    label: "Pago de servicios",
+    sign: +1,
+    compute: (a) => ({ delta: +a, commission: 10 }),
+    note: "Comisión fija de 10 lps",
+  },
+  Pago: {
+    label: "Pago",
+    sign: +1,
+    compute: (a) => ({ delta: +a, commission: Math.ceil(a / 1000) * 10 }),
+    note: "10 lps por cada mil",
+  },
+  Remesa: {
+    label: "Remesa",
+    sign: -1,
+    compute: (a) => {
+      let c = 0;
+      if (a <= 2000) c = 10;
+      else if (a <= 5000) c = 30;
+      else if (a <= 10000) c = 50;
+      else if (a <= 20000) c = 80;
+      else c = 100;
+      return { delta: -a, commission: c };
+    },
+    note: "Escalonada: 10/30/50/80/100 lps",
+  },
+  Recarga: {
+    label: "Recarga",
+    sign: +1,
+    compute: (a) => ({ delta: +a, commission: 2 }),
+    note: "Comisión fija de 2 lps",
+  },
+  Gasto: {
+    label: "Gasto",
+    sign: -1,
+    compute: (a) => ({ delta: -a, commission: 0 }),
+    note: "Restar monto, sin comisión",
+  },
+};
+
+// ---------- NLP: map spoken phrase → transaction type ----------
+// Order matters — more specific phrases first.
+const PHRASE_MAP = [
+  { re: /\b(dep[oó]sito|deposito)\s*(propio|mio|m[ií]o|personal)\b/i, type: "Deposito_propio" },
+  { re: /\b(dep[oó]sito|deposito)\b/i, type: "Deposito" },
+  { re: /\b(retir[oa]|retiro)\b/i, type: "retiro" },
+  { re: /\b(pago\s+de\s+servicios?|pago\s+servicios?|servicios?)\b/i, type: "Pago_servicios" },
+  { re: /\b(pago)\b/i, type: "Pago" },
+  { re: /\b(remes[ao]|remesa)\b/i, type: "Remesa" },
+  { re: /\b(recarg[ao]|recarga)\b/i, type: "Recarga" },
+  { re: /\b(gast[oa]|gasto|egres[oa])\b/i, type: "Gasto" },
+];
+
+// Spanish number words → digits (covers 0-999,999 in normal speech)
+const ES_NUMBERS = {
+  cero:0, un:1, una:1, uno:1, dos:2, tres:3, cuatro:4, cinco:5, seis:6, siete:7, ocho:8, nueve:9,
+  diez:10, once:11, doce:12, trece:13, catorce:14, quince:15,
+  dieciseis:16, dieciséis:16, diecisiete:17, dieciocho:18, diecinueve:19,
+  veinte:20, veintiuno:21, veintidos:22, veintidós:22, veintitres:23, veintitrés:23, veinticuatro:24,
+  veinticinco:25, veintiseis:26, veintiséis:26, veintisiete:27, veintiocho:28, veintinueve:29,
+  treinta:30, cuarenta:40, cincuenta:50, sesenta:60, setenta:70, ochenta:80, noventa:90,
+  cien:100, ciento:100, doscientos:200, trescientos:300, cuatrocientos:400, quinientos:500,
+  seiscientos:600, setecientos:700, ochocientos:800, novecientos:900,
+  mil:1000, millon:1000000, millón:1000000, millones:1000000,
+  y:-1 // connector (ignored)
+};
+
+function parseSpanishNumber(str){
+  // First, try a straight digit match anywhere in the string
+  const digitMatch = str.replace(/,/g,"").match(/\b(\d+(?:\.\d+)?)\b/);
+  if (digitMatch) return parseFloat(digitMatch[1]);
+
+  // Otherwise parse Spanish number words
+  const words = str.toLowerCase()
+    .replace(/[^\wáéíóúñ\s]/g, " ")
+    .split(/\s+/).filter(Boolean);
+
+  let total = 0, current = 0, found = false;
+  for (const w of words){
+    const v = ES_NUMBERS[w];
+    if (v === undefined) continue;
+    if (v === -1) continue;            // "y"
+    found = true;
+    if (v === 1000 || v === 1000000){
+      current = (current || 1) * v;
+      total += current;
+      current = 0;
+    } else if (v === 100 && current > 0 && current < 10){
+      current = current * 100;         // "dos cientos" edge (not canonical but harmless)
+    } else {
+      current += v;
+    }
+  }
+  total += current;
+  return found ? total : null;
+}
+
+function parseDictation(text){
+  if (!text || !text.trim()) return { ok:false, reason:"empty" };
+
+  // 1. Find transaction type
+  let type = null;
+  for (const m of PHRASE_MAP){
+    if (m.re.test(text)){ type = m.type; break; }
+  }
+  if (!type) return { ok:false, reason:"type", text };
+
+  // 2. Find amount — strip matched phrase to avoid false-positives on numbers inside the label
+  const amount = parseSpanishNumber(text);
+  if (amount === null || amount <= 0 || !isFinite(amount)){
+    return { ok:false, reason:"amount", text, type };
+  }
+
+  return { ok:true, type, amount };
+}
+
+// ---------- Persistence ----------
+const STORE_KEY = "cajadevoz.v1";
+const ARCHIVE_KEY = "cajadevoz.archive.v1";
+const store = {
+  load(){
+    try { return JSON.parse(localStorage.getItem(STORE_KEY)) || null; }
+    catch { return null; }
+  },
+  save(state){ localStorage.setItem(STORE_KEY, JSON.stringify(state)); },
+  clear(){ localStorage.removeItem(STORE_KEY); },
+  loadArchive(){
+    try { return JSON.parse(localStorage.getItem(ARCHIVE_KEY)) || []; }
+    catch { return []; }
+  },
+  saveArchive(days){ localStorage.setItem(ARCHIVE_KEY, JSON.stringify(days)); },
+};
+
+function closeDay(dateStr){
+  if (!state) return null;
+  const archive = store.loadArchive();
+  const final = currentBalance();
+  const t = totals();
+  const day = {
+    id: "d-" + Date.now(),
+    date: dateStr || new Date().toISOString().slice(0,10),
+    closedAt: Date.now(),
+    sessionStart: state.sessionStart,
+    initialBalance: state.initialBalance,
+    finalBalance: final,
+    totalIn: t.inn,
+    totalOut: t.out,
+    totalCommissions: t.comm,
+    transactionCount: state.transactions.length,
+    transactions: state.transactions.slice(),
+  };
+  archive.push(day);
+  archive.sort((a,b)=> (b.date || "").localeCompare(a.date || ""));
+  store.saveArchive(archive);
+  store.clear();
+  state = null;
+  return day;
+}
+
+function getLastClose(){
+  const archive = store.loadArchive();
+  if (!archive.length) return null;
+  return archive[0]; // already sorted desc
+}
+
+// ---------- State ----------
+let state = store.load() || null;
+
+function newSession(initialBalance){
+  state = {
+    sessionStart: Date.now(),
+    initialBalance,
+    transactions: [],   // { id, ts, type, amount, delta, commission, balanceAfter }
+  };
+  store.save(state);
+}
+
+function currentBalance(){
+  if (!state) return 0;
+  return state.transactions.reduce(
+    (b, t) => b + t.delta - t.commission,
+    state.initialBalance
+  );
+}
+
+function totals(){
+  if (!state) return { inn:0, out:0, comm:0 };
+  let inn=0,out=0,comm=0;
+  for (const t of state.transactions){
+    if (t.delta > 0) inn += t.delta;
+    else out += -t.delta;
+    comm += t.commission;
+  }
+  return { inn, out, comm };
+}
+
+function addTransaction(type, amount){
+  const rule = RULES[type];
+  if (!rule) throw new Error("Tipo inválido: "+type);
+  const { delta, commission } = rule.compute(amount);
+  const tx = {
+    id: Date.now() + "-" + Math.random().toString(36).slice(2,7),
+    ts: Date.now(),
+    type, amount, delta, commission,
+  };
+  // balance after = everything up to and including this tx
+  state.transactions.push(tx);
+  tx.balanceAfter = currentBalance();
+  store.save(state);
+  return tx;
+}
+
+function undoLast(){
+  if (!state || !state.transactions.length) return null;
+  const removed = state.transactions.pop();
+  store.save(state);
+  return removed;
+}
+
+// ---------- Formatting ----------
+const fmt = (n) => {
+  const sign = n < 0 ? "-" : "";
+  const abs = Math.abs(n);
+  return sign + abs.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};
+const fmtSigned = (n) => (n >= 0 ? "+" : "") + fmt(n);
+const fmtTime = (ts) => new Date(ts).toLocaleTimeString("es-HN", { hour:"2-digit", minute:"2-digit", second:"2-digit" });
+
+// ---------- Rendering ----------
+const $ = (id) => document.getElementById(id);
+
+function render(){
+  const bal = currentBalance();
+  const sign = bal < 0 ? "-" : "";
+  const abs = Math.abs(bal);
+  const intPart = Math.floor(abs).toLocaleString("en-US");
+  const centsPart = abs.toFixed(2).split(".")[1];
+  $("balance").innerHTML = `<span class="int">${sign}${intPart}</span><span class="cents">.${centsPart}</span><span class="currency">LPS</span>`;
+  $("balance").className = "balance text-[96px] md:text-[128px] " + (bal < 0 ? "neg" : "");
+
+  $("currentDate").textContent = new Date().toLocaleDateString("es-HN", { weekday:"long", day:"2-digit", month:"long", year:"numeric" });
+
+  if (state){
+    $("initialBalance").textContent = fmt(state.initialBalance);
+    const t = totals();
+    $("totalIn").textContent = "+" + fmt(t.inn);
+    $("totalOut").textContent = "-" + fmt(t.out);
+    $("totalCommissions").textContent = fmt(t.comm);
+    $("txCount").textContent = state.transactions.length + " transacci" + (state.transactions.length === 1 ? "ón" : "ones");
+    $("sessionInfo").textContent = "Sesión: " + new Date(state.sessionStart).toLocaleString("es-HN", { dateStyle:"short", timeStyle:"short" });
+  }
+
+  renderHistory();
+  const undoDisabled = !state || state.transactions.length === 0;
+  $("undoBtn").disabled = undoDisabled;
+  $("undoBtnMobile") && ($("undoBtnMobile").disabled = undoDisabled);
+}
+
+function renderHistory(){
+  const el = $("history");
+  if (!state || state.transactions.length === 0){
+    el.innerHTML = `<div class="px-5 py-12 text-center">
+      <div class="mx-auto w-10 h-10 rounded-full chip flex items-center justify-center mb-3">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="faint"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+      </div>
+      <div class="text-sm dim">Sin transacciones aún</div>
+      <div class="text-xs faint mt-1">Dicta tu primera operación</div>
+    </div>`;
+    return;
+  }
+  const last = state.transactions.slice(-10).reverse();
+  el.innerHTML = last.map((t, i) => {
+    const rule = RULES[t.type];
+    const net = t.delta - t.commission;
+    const isPos = t.delta > 0;
+    return `
+      <div class="row px-5 py-3 flex items-center gap-3 ${i===0 ? 'row-new' : ''}">
+        <div class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${isPos ? 'pos' : 'neg'}" style="background:color-mix(in oklch, currentColor 12%, transparent)">
+          ${isPos
+            ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>'
+            : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M19 12l-7 7-7-7"/></svg>'}
+        </div>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-baseline gap-2">
+            <div class="text-sm font-medium truncate">${rule.label}</div>
+            <div class="text-[10px] faint mono">${fmtTime(t.ts)}</div>
+          </div>
+          <div class="text-[11px] faint mono mt-0.5">
+            ${t.commission > 0 ? `Comisión ${fmt(t.commission)} · ` : ''}Saldo ${fmt(t.balanceAfter)}
+          </div>
+        </div>
+        <div class="text-right shrink-0">
+          <div class="mono text-sm ${isPos ? 'pos' : 'neg'}">${fmtSigned(t.delta)}</div>
+          ${t.commission > 0 ? `<div class="mono text-[10px] warn">−${fmt(t.commission)}</div>` : ''}
+        </div>
+      </div>`;
+  }).join("");
+}
+
+// ---------- Toast ----------
+let toastTimer;
+function toast(msg, kind="info"){
+  const el = $("toast");
+  const color = kind === "error" ? "var(--danger)" : kind === "success" ? "var(--accent)" : "var(--ink-dim)";
+  el.style.borderColor = color;
+  el.innerHTML = `<span class="dot" style="background:${color}"></span><span>${msg}</span>`;
+  el.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=> el.classList.remove("show"), 2600);
+}
+
+// ---------- Audio confirmation ----------
+let audioCtx = null;
+function beep(kind="ok"){
+  try{
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.connect(g); g.connect(audioCtx.destination);
+    o.type = "sine";
+    if (kind === "ok"){
+      o.frequency.setValueAtTime(660, audioCtx.currentTime);
+      o.frequency.exponentialRampToValueAtTime(990, audioCtx.currentTime + 0.12);
+    } else if (kind === "undo"){
+      o.frequency.setValueAtTime(440, audioCtx.currentTime);
+      o.frequency.exponentialRampToValueAtTime(330, audioCtx.currentTime + 0.14);
+    } else { // err
+      o.frequency.setValueAtTime(220, audioCtx.currentTime);
+    }
+    g.gain.setValueAtTime(0.001, audioCtx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.25, audioCtx.currentTime + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.25);
+    o.start();
+    o.stop(audioCtx.currentTime + 0.26);
+  } catch(e){}
+}
+
+function speak(text){
+  try{
+    if (!window.speechSynthesis) return;
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = "es-HN";
+    u.rate = 1.05;
+    u.pitch = 1;
+    speechSynthesis.cancel();
+    speechSynthesis.speak(u);
+  } catch(e){}
+}
+
+// ---------- Speech recognition ----------
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognition = null, listening = false, manualStop = false;
+
+function setStatus(kind, text){
+  const dot = $("statusDot"), txt = $("statusText");
+  dot.className = "dot " + (kind === "live" ? "live" : kind === "err" ? "err" : "");
+  txt.textContent = text;
+}
+
+function setTranscript(html, {active=false, error=false} = {}){
+  const t1 = $("transcript"), t2 = $("transcriptMobile");
+  [t1, t2].forEach(el => {
+    if (!el) return;
+    el.innerHTML = html;
+    el.classList.toggle("active", active);
+    el.classList.toggle("error", error);
+  });
+}
+function setMicListening(on){
+  ["micBtn","micBtnMobile"].forEach(id => {
+    const el = $(id); if (!el) return;
+    el.classList.toggle("listening", on);
+  });
+}
+
+function initRecognition(){
+  if (!SR){
+    $("micBtn").disabled = true;
+    $("micBtnMobile") && ($("micBtnMobile").disabled = true);
+    $("micBtn").title = "Tu navegador no soporta reconocimiento de voz. Usa ingreso manual.";
+    setStatus("err","No disponible");
+    setTranscript('<span class="neg">Reconocimiento de voz no disponible en este navegador.</span><span class="faint"> Usa <u>ingreso manual</u>.</span>', {error:true});
+    return;
+  }
+  recognition = new SR();
+  recognition.lang = "es-HN";
+  recognition.interimResults = true;
+  recognition.continuous = false;
+  recognition.maxAlternatives = 1;
+
+  recognition.onstart = () => {
+    listening = true;
+    setMicListening(true);
+    setTranscript('<span class="faint">Escuchando…</span>', {active:true});
+    setStatus("live","Escuchando");
+  };
+
+  recognition.onresult = (e) => {
+    let interim = "", final = "";
+    for (let i = e.resultIndex; i < e.results.length; i++){
+      const r = e.results[i];
+      if (r.isFinal) final += r[0].transcript;
+      else interim += r[0].transcript;
+    }
+    const shown = (final + " " + interim).trim();
+    setTranscript(shown ? `<span class="dim">${shown}</span>` : '<span class="faint">Escuchando…</span>', {active:true});
+
+    if (final){
+      handleDictation(final.trim());
+    }
+  };
+
+  recognition.onerror = (e) => {
+    setStatus("err", "Error: " + e.error);
+    if (e.error === "not-allowed" || e.error === "service-not-allowed"){
+      setTranscript('<span class="neg">Permiso de micrófono denegado.</span>', {error:true});
+      toast("Permite el acceso al micrófono", "error");
+    } else if (e.error === "no-speech"){
+      setTranscript('<span class="faint">No se escuchó nada. Intenta de nuevo.</span>');
+    }
+  };
+
+  recognition.onend = () => {
+    listening = false;
+    setMicListening(false);
+    if (!manualStop) setStatus("", "Inactivo");
+    manualStop = false;
+  };
+}
+
+function toggleMic(){
+  if (!recognition) return;
+  if (listening){ manualStop = true; recognition.stop(); }
+  else {
+    try { recognition.start(); }
+    catch(e){ /* already started */ }
+  }
+}
+
+function handleDictation(text){
+  const parsed = parseDictation(text);
+  if (!parsed.ok){
+    const reasonText = {
+      type: "No reconocí el tipo de transacción",
+      amount: "No reconocí un monto válido",
+      empty: "Dictado vacío",
+    }[parsed.reason] || "No pude procesar";
+    setTranscript(`<span class="neg">"${text}"</span><br><span class="faint text-xs">${reasonText}. Intenta: "depósito dos mil"</span>`, {error:true});
+    beep("err");
+    speak(reasonText + ". Intenta de nuevo.");
+    toast(reasonText, "error");
+    return;
+  }
+
+  const tx = addTransaction(parsed.type, parsed.amount);
+  const rule = RULES[parsed.type];
+  render();
+  beep("ok");
+  // Success confirmation is visual + audible beep only (no speech)
+  setTranscript(`<span class="pos">✓ ${rule.label}</span> <span class="dim">${fmt(parsed.amount)}</span>${tx.commission > 0 ? ` <span class="warn mono text-xs">comisión ${fmt(tx.commission)}</span>` : ''}`);
+  toast(`${rule.label} ${fmtSigned(tx.delta)}`, "success");
+}
+
+// ---------- Events ----------
+function bindEvents(){
+  $("micBtn").addEventListener("click", toggleMic);
+  $("micBtnMobile")?.addEventListener("click", toggleMic);
+  $("undoBtnMobile")?.addEventListener("click", doUndo);
+  $("manualBtnMobile")?.addEventListener("click", () => {
+    $("manualPanel").classList.remove("hidden");
+    window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+    setTimeout(() => $("manualAmount").focus(), 300);
+  });
+
+  // Space to hold-talk (desktop convenience) — only when no input focused
+  document.addEventListener("keydown", (e) => {
+    if (e.code === "Space" && !["INPUT","SELECT","TEXTAREA"].includes(document.activeElement?.tagName)){
+      if ($("initModal").classList.contains("hidden") === false) return;
+      if (!listening){ e.preventDefault(); toggleMic(); }
+    }
+    if (e.key === "Escape"){
+      closeRules();
+    }
+    // Ctrl/Cmd+Z → undo
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z"){
+      e.preventDefault();
+      doUndo();
+    }
+  });
+
+  $("undoBtn").addEventListener("click", doUndo);
+
+  $("manualBtn").addEventListener("click", () => {
+    $("manualPanel").classList.toggle("hidden");
+    if (!$("manualPanel").classList.contains("hidden")){
+      $("manualAmount").focus();
+    }
+  });
+
+  $("manualForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const type = $("manualType").value;
+    const amount = parseFloat($("manualAmount").value);
+    if (!amount || amount <= 0){ toast("Monto inválido","error"); return; }
+    const tx = addTransaction(type, amount);
+    render();
+    beep("ok");
+    const rule = RULES[type];
+    toast(`${rule.label} ${fmtSigned(tx.delta)}`, "success");
+    $("manualAmount").value = "";
+  });
+
+  $("resetBtn").addEventListener("click", () => {
+    if (confirm("¿Reiniciar sesión? Se perderá el historial actual.")){
+      store.clear();
+      state = null;
+      showInitModal();
+      render();
+    }
+  });
+
+  $("initForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const v = parseFloat($("initAmount").value);
+    if (isNaN(v) || v < 0){ toast("Monto inválido","error"); return; }
+    newSession(v);
+    hideInitModal();
+    render();
+    beep("ok");
+    toast(`Sesión iniciada con ${fmt(v)} lps`, "success");
+  });
+
+  $("closeDayBtn").addEventListener("click", openCloseDay);
+  $("cdCancel").addEventListener("click", hideCloseDay);
+  $("cdConfirm").addEventListener("click", doCloseDay);
+  $("closeDayModal").addEventListener("click", (e) => { if (e.target.id === "closeDayModal") hideCloseDay(); });
+
+  $("archiveBtn").addEventListener("click", openArchive);
+  $("closeArchive").addEventListener("click", closeArchive);
+  $("archiveModal").addEventListener("click", (e) => { if (e.target.id === "archiveModal") closeArchive(); });
+
+  $("useLastClose").addEventListener("click", () => {
+    const last = getLastClose();
+    if (last) $("initAmount").value = last.finalBalance.toFixed(2);
+    $("initAmount").focus();
+  });
+
+  $("toggleRules").addEventListener("click", showRules);
+  $("closeRules").addEventListener("click", closeRules);
+  $("rulesModal").addEventListener("click", (e) => { if (e.target.id === "rulesModal") closeRules(); });
+}
+
+function doUndo(){
+  if (!state || !state.transactions.length) return;
+  const removed = undoLast();
+  render();
+  // flash animation on top row would require re-render timing; toast + sound suffices
+  beep("undo");
+  const rule = RULES[removed.type];
+  toast(`Deshecho: ${rule.label} ${fmt(removed.amount)}`, "info");
+}
+
+function showInitModal(){
+  const last = getLastClose();
+  const sug = $("lastCloseSuggestion");
+  if (last){
+    $("lastCloseDate").textContent = new Date(last.date + 'T00:00').toLocaleDateString("es-HN", { day:"2-digit", month:"short" });
+    $("lastCloseAmt").textContent = fmt(last.finalBalance) + " lps";
+    sug.classList.remove("hidden");
+    sug.classList.add("flex");
+    $("initAmount").value = last.finalBalance.toFixed(2);
+  } else {
+    sug.classList.add("hidden");
+    sug.classList.remove("flex");
+    $("initAmount").value = "";
+  }
+  $("initModal").classList.remove("hidden");
+  $("initModal").classList.add("flex");
+  setTimeout(()=>{ $("initAmount").focus(); $("initAmount").select(); }, 50);
+}
+function hideInitModal(){ $("initModal").classList.add("hidden"); $("initModal").classList.remove("flex"); }
+function showRules(){
+  const el = $("rulesContent");
+  el.innerHTML = Object.entries(RULES).map(([key, r]) => `
+    <div class="chip rounded-lg p-4">
+      <div class="flex items-center justify-between mb-1">
+        <div class="font-medium">${r.label}</div>
+        <div class="text-[10px] faint mono uppercase tracking-wider">${r.sign > 0 ? 'Entrada +' : 'Salida −'}</div>
+      </div>
+      <div class="text-[12px] dim mono">${r.note}</div>
+    </div>
+  `).join("");
+  $("rulesModal").classList.remove("hidden");
+  $("rulesModal").classList.add("flex");
+}
+function closeRules(){ $("rulesModal").classList.add("hidden"); $("rulesModal").classList.remove("flex"); }
+
+// ---------- Boot ----------
+function openCloseDay(){
+  if (!state || state.transactions.length === 0){
+    toast("No hay transacciones para cerrar", "error");
+    return;
+  }
+  const t = totals();
+  $("cdInitial").textContent = fmt(state.initialBalance);
+  $("cdFinal").textContent = fmt(currentBalance());
+  $("cdCount").textContent = state.transactions.length;
+  $("cdComm").textContent = fmt(t.comm);
+  $("cdDate").value = new Date().toISOString().slice(0,10);
+  $("closeDayModal").classList.remove("hidden");
+  $("closeDayModal").classList.add("flex");
+}
+function hideCloseDay(){ $("closeDayModal").classList.add("hidden"); $("closeDayModal").classList.remove("flex"); }
+
+function doCloseDay(){
+  const d = $("cdDate").value || new Date().toISOString().slice(0,10);
+  const day = closeDay(d);
+  if (!day) return;
+  hideCloseDay();
+  beep("ok");
+  toast(`Día cerrado: ${fmt(day.finalBalance)} lps archivado`, "success");
+  render();
+  showInitModal();
+}
+
+function openArchive(){
+  const archive = store.loadArchive();
+  const list = $("archiveList"), detail = $("archiveDetail");
+  if (!archive.length){
+    list.innerHTML = '<div class="p-5 text-sm dim text-center">Sin días archivados</div>';
+    detail.innerHTML = '<div class="h-full flex items-center justify-center text-sm faint">Cierra un día para verlo aquí</div>';
+  } else {
+    list.innerHTML = archive.map((d, i) => `
+      <button class="archive-item w-full text-left px-4 py-3 border-b border-[color:var(--border)] hover:bg-[color:var(--surface)]" data-idx="${i}">
+        <div class="text-sm font-medium">${new Date(d.date + 'T00:00').toLocaleDateString("es-HN", { weekday:"short", day:"2-digit", month:"short" })}</div>
+        <div class="mono text-xs dim mt-0.5">${fmt(d.finalBalance)} · ${d.transactionCount} tx</div>
+      </button>
+    `).join("");
+    list.querySelectorAll(".archive-item").forEach(btn => {
+      btn.addEventListener("click", () => renderArchiveDetail(archive[+btn.dataset.idx]));
+    });
+    renderArchiveDetail(archive[0]);
+  }
+  $("archiveModal").classList.remove("hidden");
+  $("archiveModal").classList.add("flex");
+}
+function closeArchive(){ $("archiveModal").classList.add("hidden"); $("archiveModal").classList.remove("flex"); }
+
+function renderArchiveDetail(d){
+  const el = $("archiveDetail");
+  const net = d.finalBalance - d.initialBalance;
+  el.innerHTML = `
+    <div class="mb-4">
+      <div class="text-[11px] faint mono uppercase tracking-[0.18em]">${new Date(d.date + 'T00:00').toLocaleDateString("es-HN", { weekday:"long", day:"2-digit", month:"long", year:"numeric" })}</div>
+      <div class="mono text-3xl font-medium mt-1">${fmt(d.finalBalance)} <span class="text-sm faint">LPS</span></div>
+      <div class="text-xs mono mt-1 ${net>=0?'pos':'neg'}">${net>=0?'+':''}${fmt(net)} vs inicial</div>
+    </div>
+    <div class="grid grid-cols-2 gap-2 mb-5">
+      <div class="chip rounded-lg p-2.5"><div class="text-[10px] faint mono uppercase tracking-wider">Inicial</div><div class="mono text-sm">${fmt(d.initialBalance)}</div></div>
+      <div class="chip rounded-lg p-2.5"><div class="text-[10px] faint mono uppercase tracking-wider">Final</div><div class="mono text-sm pos">${fmt(d.finalBalance)}</div></div>
+      <div class="chip rounded-lg p-2.5"><div class="text-[10px] faint mono uppercase tracking-wider">Entradas</div><div class="mono text-sm pos">+${fmt(d.totalIn)}</div></div>
+      <div class="chip rounded-lg p-2.5"><div class="text-[10px] faint mono uppercase tracking-wider">Salidas</div><div class="mono text-sm neg">-${fmt(d.totalOut)}</div></div>
+      <div class="chip rounded-lg p-2.5 col-span-2"><div class="text-[10px] faint mono uppercase tracking-wider">Comisiones totales</div><div class="mono text-sm warn">${fmt(d.totalCommissions)}</div></div>
+    </div>
+    <div class="text-[11px] faint mono uppercase tracking-[0.18em] mb-2">Transacciones (${d.transactionCount})</div>
+    <div class="surface rounded-lg overflow-hidden">
+      ${d.transactions.map(t => {
+        const rule = RULES[t.type] || { label: t.type };
+        return `<div class="row px-3 py-2 flex items-center gap-3 text-xs">
+          <div class="w-6 h-6 rounded flex items-center justify-center ${t.delta>0?'pos':'neg'}" style="background:color-mix(in oklch, currentColor 12%, transparent)">${t.delta>0?'+':'−'}</div>
+          <div class="flex-1 min-w-0"><div class="truncate">${rule.label}</div><div class="faint mono text-[10px]">${fmtTime(t.ts)}</div></div>
+          <div class="mono text-right">
+            <div class="${t.delta>0?'pos':'neg'}">${fmtSigned(t.delta)}</div>
+            ${t.commission>0?`<div class="warn text-[10px]">−${fmt(t.commission)}</div>`:''}
+          </div>
+        </div>`;
+      }).join("")}
+    </div>
+  `;
+}
+
+function boot(){
+  bindEvents();
+  initRecognition();
+  if (!state){ showInitModal(); }
+  render();
+}
+boot();
+</script>
+</body>
+</html>

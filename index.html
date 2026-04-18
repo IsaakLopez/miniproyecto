@@ -430,11 +430,15 @@ const RULES = {
   Deposito: {
     label: "Depósito",
     sign: +1,
-    compute: (a) => ({
-      delta: +a,
-      commission: a < 10000 ? a * 0.010 : a * 0.005, // 10 por mil / 5 por mil
-    }),
-    note: "< 10,000 → 10 por mil · ≥ 10,000 → 5 por mil",
+    commissionEarned: true, // comisión es ingreso: suma al saldo
+    compute: (a) => {
+      let c;
+      if (a < 1000) c = 10;
+      else if (a < 10000) c = Math.floor(a / 1000) * 10;
+      else c = Math.floor(a / 1000) * 5;
+      return { delta: +(a + c), commission: c }; // saldo sube monto + comisión
+    },
+    note: "< 1,000 → 10 fijo · 1,000–9,999 → 10 por cada mil entero · ≥ 10,000 → 5 por cada mil entero",
   },
   retiro: {
     label: "Retiro",
@@ -445,18 +449,24 @@ const RULES = {
   Pago_servicios: {
     label: "Pago de servicios",
     sign: +1,
-    compute: (a) => ({ delta: +a, commission: 10 }),
-    note: "Comisión fija de 10 lps",
+    commissionEarned: true,
+    compute: (a) => ({ delta: +(a + 10), commission: 10 }),
+    note: "Comisión fija de 10 lps (suma al saldo)",
   },
   Pago: {
     label: "Pago",
     sign: +1,
-    compute: (a) => ({ delta: +a, commission: Math.ceil(a / 1000) * 10 }),
-    note: "10 lps por cada mil",
+    commissionEarned: true,
+    compute: (a) => {
+      const c = Math.floor(a / 1000) * 10;
+      return { delta: +(a + c), commission: c };
+    },
+    note: "10 lps por cada mil (suma al saldo)",
   },
   Remesa: {
     label: "Remesa",
     sign: -1,
+    commissionEarned: true, // comisión se descuenta del monto, no del saldo por separado
     compute: (a) => {
       let c = 0;
       if (a <= 2000) c = 10;
@@ -464,15 +474,16 @@ const RULES = {
       else if (a <= 10000) c = 50;
       else if (a <= 20000) c = 80;
       else c = 100;
-      return { delta: -a, commission: c };
+      return { delta: -(a - c), commission: c }; // solo descuenta el neto (monto - comisión)
     },
-    note: "Escalonada: 10/30/50/80/100 lps",
+    note: "Escalonada: 10/30/50/80/100 lps · saldo resta (monto − comisión)",
   },
   Recarga: {
     label: "Recarga",
     sign: +1,
-    compute: (a) => ({ delta: +a, commission: 2 }),
-    note: "Comisión fija de 2 lps",
+    commissionEarned: true,
+    compute: (a) => ({ delta: +(a + 2), commission: 2 }),
+    note: "Comisión fija de 2 lps (suma al saldo)",
   },
   Gasto: {
     label: "Gasto",
@@ -621,10 +632,13 @@ function newSession(initialBalance){
 
 function currentBalance(){
   if (!state) return 0;
-  return state.transactions.reduce(
-    (b, t) => b + t.delta - t.commission,
-    state.initialBalance
-  );
+  return state.transactions.reduce((b, t) => {
+    const rule = RULES[t.type];
+    // Si commissionEarned, la comisión ya está incluida en delta (no restar dos veces)
+    return rule && rule.commissionEarned
+      ? b + t.delta
+      : b + t.delta - t.commission;
+  }, state.initialBalance);
 }
 
 function totals(){

@@ -648,9 +648,11 @@ const syncUI = {
 let syncTimer = null;
 let syncPending = false;
 let syncInFlight = false;
+let syncBootstrapping = true; // bloquea scheduleSync hasta terminar el bootstrap inicial
 
 function scheduleSync(){
   if (!SYNC_ENABLED()) return;
+  if (syncBootstrapping) return; // evita subir datos viejos antes de recibir los remotos
   syncPending = true;
   syncUI.set("pending", "Guardando en Google Sheets...");
   clearTimeout(syncTimer);
@@ -724,6 +726,7 @@ const store = {
 async function bootstrapFromRemote(){
   if (!SYNC_ENABLED()){
     syncUI.set("off", "Sincronización no configurada (solo local)");
+    syncBootstrapping = false;
     return;
   }
   syncUI.set("pending", "Cargando desde Google Sheets...");
@@ -733,34 +736,35 @@ async function bootstrapFromRemote(){
     const remoteState = data.state || null;
     const remoteArchive = data.archive || [];
 
-    // Estado: si remoto tiene transacciones y el local no, o si el remoto es
-    // más reciente (más transacciones o sessionStart diferente), preferir remoto.
-    const localState = store.load();
-    const preferRemote =
-      !localState ||
-      (remoteState && remoteState.sessionStart !== localState.sessionStart) ||
-      (remoteState && remoteState.transactions.length >= localState.transactions.length);
+    /* --- Regla simple: Sheets es la fuente de verdad ---
+       En un escenario de un solo usuario con varios dispositivos (sin uso
+       simultáneo), el estado remoto siempre es la versión correcta.
+       - Si hay sesión remota → esa es la sesión.
+       - Si NO hay sesión remota → no hay sesión (aunque el local tenga una
+         sesión vieja, porque probablemente fue cerrada en otro dispositivo).
+       Lo mismo aplica al archivo de días cerrados: el remoto gana completo,
+       no se mezcla con el local (evita que días viejos "resuciten"). */
 
-    if (preferRemote){
-      if (remoteState) localStorage.setItem(STORE_KEY, JSON.stringify(remoteState));
-      else localStorage.removeItem(STORE_KEY);
-      state = remoteState || null;
+    if (remoteState){
+      localStorage.setItem(STORE_KEY, JSON.stringify(remoteState));
+    } else {
+      localStorage.removeItem(STORE_KEY);
     }
+    state = remoteState || null;
 
-    // Archivo de días cerrados: combinar por id, preferir remoto
-    const localArchive = store.loadArchive();
-    const byId = new Map();
-    for (const d of localArchive) byId.set(d.id, d);
-    for (const d of remoteArchive) byId.set(d.id, d); // remoto gana
-    const merged = Array.from(byId.values())
-      .sort((a,b)=> (b.date || "").localeCompare(a.date || ""));
-    store.saveArchive(merged);
+    // Archivo: reemplazar completamente con lo que dice Sheets
+    const sortedRemote = remoteArchive
+      .slice()
+      .sort((a,b) => (b.date || "").localeCompare(a.date || ""));
+    store.saveArchive(sortedRemote);
 
     syncUI.set("ok", "Sincronizado con Google Sheets");
     render();
   } catch (err) {
     console.warn("[sync] bootstrap error:", err);
     syncUI.set("err", "Sin conexión. Trabajando en local. " + err.message);
+  } finally {
+    syncBootstrapping = false; // ya se puede sincronizar cambios del usuario
   }
 }
 

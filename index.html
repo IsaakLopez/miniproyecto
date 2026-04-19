@@ -146,6 +146,10 @@
         <span class="dot" id="statusDot"></span>
         <span id="statusText" class="mono uppercase tracking-wider">Inactivo</span>
       </div>
+      <button id="syncBtn" class="btn rounded-lg px-2.5 py-1.5 text-xs dim flex items-center gap-1.5" title="Estado de sincronización con Google Sheets">
+        <svg id="syncIcon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9z"/></svg>
+        <span id="syncText" class="mono uppercase tracking-wider hidden md:inline">—</span>
+      </button>
       <button id="archiveBtn" class="btn rounded-lg px-3 py-1.5 text-xs dim flex items-center gap-1.5" title="Historial de días">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
         <span class="hidden md:inline">Historial</span>
@@ -572,18 +576,202 @@ function parseDictation(text){
 // ---------- Persistence ----------
 const STORE_KEY = "cajadevoz.v1";
 const ARCHIVE_KEY = "cajadevoz.archive.v1";
+
+/* =========================================================================
+   SYNC CONFIG — Google Sheets vía Apps Script
+   Rellena estos dos valores después de desplegar tu Apps Script.
+   Si los dejas vacíos, la app sigue funcionando solo con localStorage.
+   ========================================================================= */
+const SYNC_URL   = "https://script.google.com/macros/s/AKfycbz5rZeTy2FwRxa3hvbtsb0Mi2xynS5vDN0an7SzeVslzUGIMI0XugdMFLBoXaxALaiM/exec";
+const SYNC_TOKEN = "I_LIKE_OLDER_WOMAN";
+
+const SYNC_ENABLED = () =>
+  SYNC_URL && SYNC_TOKEN &&
+  !SYNC_URL.startsWith("PEGA_AQUI") && !SYNC_TOKEN.startsWith("PEGA_AQUI");
+
+/* ---- Cliente HTTP ---- */
+const sync = {
+  async get(){
+    if (!SYNC_ENABLED()) return null;
+    const url = SYNC_URL + "?token=" + encodeURIComponent(SYNC_TOKEN);
+    const r = await fetch(url, { method: "GET" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || "Error desconocido");
+    return j.data; // { state, archive }
+  },
+  async post(action, payload){
+    if (!SYNC_ENABLED()) return null;
+    // Apps Script + fetch: usar text/plain para evitar preflight CORS
+    const r = await fetch(SYNC_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ token: SYNC_TOKEN, action, payload }),
+    });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || "Error desconocido");
+    return j;
+  },
+};
+
+/* ---- Indicador visual de estado de sincronización ---- */
+const syncUI = {
+  set(kind, msg){
+    const btn = document.getElementById("syncBtn");
+    const txt = document.getElementById("syncText");
+    const icon = document.getElementById("syncIcon");
+    if (!btn) return;
+    btn.title = msg || "";
+    btn.style.color = "";
+    if (kind === "off"){
+      if (txt) txt.textContent = "Local";
+      btn.style.opacity = ".5";
+    } else if (kind === "ok"){
+      if (txt) txt.textContent = "Sync";
+      btn.style.opacity = "1";
+      btn.style.color = "var(--accent)";
+    } else if (kind === "pending"){
+      if (txt) txt.textContent = "...";
+      btn.style.opacity = "1";
+    } else if (kind === "err"){
+      if (txt) txt.textContent = "Offline";
+      btn.style.opacity = "1";
+      btn.style.color = "var(--danger)";
+    }
+  },
+};
+
+/* ---- Cola de sincronización en segundo plano ---- */
+// Guardamos siempre localmente al instante; sincronizamos con Sheets de forma
+// agrupada (debounce) para no disparar una llamada HTTP por cada tecla.
+let syncTimer = null;
+let syncPending = false;
+let syncInFlight = false;
+
+function scheduleSync(){
+  if (!SYNC_ENABLED()) return;
+  syncPending = true;
+  syncUI.set("pending", "Guardando en Google Sheets...");
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(flushSync, 900); // 0.9s debounce
+}
+
+async function flushSync(){
+  if (!SYNC_ENABLED() || syncInFlight || !syncPending) return;
+  syncInFlight = true;
+  syncPending = false;
+  try {
+    const current = state ? JSON.parse(JSON.stringify(state)) : null;
+    await sync.post("saveState", { state: current });
+    syncUI.set("ok", "Sincronizado con Google Sheets");
+  } catch (err) {
+    console.warn("[sync] flushSync error:", err);
+    syncUI.set("err", "Sin conexión. Se reintentará. " + err.message);
+    syncPending = true; // retry
+    setTimeout(flushSync, 5000);
+  } finally {
+    syncInFlight = false;
+    // si durante el envío llegaron cambios nuevos, vuelve a encolar
+    if (syncPending) setTimeout(flushSync, 500);
+  }
+}
+
+/* Botón manual para forzar una sincronización y mostrar el último error */
+window.addEventListener("DOMContentLoaded", () => {
+  const btn = document.getElementById("syncBtn");
+  if (btn) btn.addEventListener("click", async () => {
+    if (!SYNC_ENABLED()){
+      toast("Sincronización no configurada. Edita SYNC_URL y SYNC_TOKEN en el HTML.");
+      return;
+    }
+    syncUI.set("pending", "Sincronizando...");
+    try {
+      await flushSync();
+      if (!syncPending) toast("Sincronizado");
+    } catch (e) {
+      toast("Error: " + e.message);
+    }
+  });
+});
+
+/* ---- Store: localStorage como caché primario + push a Sheets ---- */
 const store = {
   load(){
     try { return JSON.parse(localStorage.getItem(STORE_KEY)) || null; }
     catch { return null; }
   },
-  save(state){ localStorage.setItem(STORE_KEY, JSON.stringify(state)); },
-  clear(){ localStorage.removeItem(STORE_KEY); },
+  save(state){
+    localStorage.setItem(STORE_KEY, JSON.stringify(state));
+    scheduleSync();
+  },
+  clear(){
+    localStorage.removeItem(STORE_KEY);
+    scheduleSync();
+  },
   loadArchive(){
     try { return JSON.parse(localStorage.getItem(ARCHIVE_KEY)) || []; }
     catch { return []; }
   },
   saveArchive(days){ localStorage.setItem(ARCHIVE_KEY, JSON.stringify(days)); },
+};
+
+/* ---- Carga inicial desde Google Sheets ----
+   Se ejecuta una vez al abrir la app. Si hay datos remotos más recientes
+   (p. ej. abriste la app en otro dispositivo), los baja y sobreescribe el caché local.
+   Si falla, se queda con el caché local y no pasa nada.
+*/
+async function bootstrapFromRemote(){
+  if (!SYNC_ENABLED()){
+    syncUI.set("off", "Sincronización no configurada (solo local)");
+    return;
+  }
+  syncUI.set("pending", "Cargando desde Google Sheets...");
+  try {
+    const data = await sync.get();
+    if (!data) return;
+    const remoteState = data.state || null;
+    const remoteArchive = data.archive || [];
+
+    // Estado: si remoto tiene transacciones y el local no, o si el remoto es
+    // más reciente (más transacciones o sessionStart diferente), preferir remoto.
+    const localState = store.load();
+    const preferRemote =
+      !localState ||
+      (remoteState && remoteState.sessionStart !== localState.sessionStart) ||
+      (remoteState && remoteState.transactions.length >= localState.transactions.length);
+
+    if (preferRemote){
+      if (remoteState) localStorage.setItem(STORE_KEY, JSON.stringify(remoteState));
+      else localStorage.removeItem(STORE_KEY);
+      state = remoteState || null;
+    }
+
+    // Archivo de días cerrados: combinar por id, preferir remoto
+    const localArchive = store.loadArchive();
+    const byId = new Map();
+    for (const d of localArchive) byId.set(d.id, d);
+    for (const d of remoteArchive) byId.set(d.id, d); // remoto gana
+    const merged = Array.from(byId.values())
+      .sort((a,b)=> (b.date || "").localeCompare(a.date || ""));
+    store.saveArchive(merged);
+
+    syncUI.set("ok", "Sincronizado con Google Sheets");
+    render();
+  } catch (err) {
+    console.warn("[sync] bootstrap error:", err);
+    syncUI.set("err", "Sin conexión. Trabajando en local. " + err.message);
+  }
+}
+
+const store_closeDay_remote = async (day) => {
+  if (!SYNC_ENABLED()) return;
+  try {
+    await sync.post("closeDay", { day });
+  } catch (err) {
+    console.warn("[sync] closeDay error:", err);
+    syncUI.set("err", "Día cerrado localmente, pero no se pudo subir a Sheets. " + err.message);
+  }
 };
 
 function closeDay(dateStr){
@@ -609,6 +797,8 @@ function closeDay(dateStr){
   store.saveArchive(archive);
   store.clear();
   state = null;
+  // Sincronizar el día cerrado al archivo remoto (fire-and-forget)
+  store_closeDay_remote(day);
   return day;
 }
 
@@ -1140,8 +1330,13 @@ function renderArchiveDetail(d){
 function boot(){
   bindEvents();
   initRecognition();
-  if (!state){ showInitModal(); }
   render();
+  // Intenta cargar desde Google Sheets. Si funciona, re-renderiza con los datos remotos.
+  // Si falla, se queda con lo que haya en localStorage y muestra "Offline" en el icono.
+  bootstrapFromRemote().finally(() => {
+    if (!state){ showInitModal(); }
+    render();
+  });
 }
 boot();
 </script>

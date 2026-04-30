@@ -755,7 +755,11 @@ async function bootstrapFromRemote(){
     // Archivo: reemplazar completamente con lo que dice Sheets
     const sortedRemote = remoteArchive
       .slice()
-      .sort((a,b) => (b.date || "").localeCompare(a.date || ""));
+      .sort((a,b) => {
+        const byDate = (b.date || "").localeCompare(a.date || "");
+        if (byDate !== 0) return byDate;
+        return (b.closedAt || 0) - (a.closedAt || 0); // mismo día → el más reciente primero
+      });
     store.saveArchive(sortedRemote);
 
     syncUI.set("ok", "Sincronizado con Google Sheets");
@@ -797,7 +801,11 @@ function closeDay(dateStr){
     transactions: state.transactions.slice(),
   };
   archive.push(day);
-  archive.sort((a,b)=> (b.date || "").localeCompare(a.date || ""));
+  archive.sort((a,b)=> {
+    const byDate = (b.date || "").localeCompare(a.date || "");
+    if (byDate !== 0) return byDate;
+    return (b.closedAt || 0) - (a.closedAt || 0); // mismo día → el más reciente primero
+  });
   store.saveArchive(archive);
   store.clear();
   state = null;
